@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Merv Images</title>
+
+<style>
+:root {
+  --bg: #0e0a0a;
+  --card: #1a0f0f;
+  --crimson: #b11226;
+  --crimson-light: #e53950;
+  --text: #f5f5f5;
+  --muted: #b9b9b9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding: 16px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+header h1 {
+  margin: 0;
+  color: var(--crimson-light);
+  font-size: 2.2rem;
+}
+
+header p {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 420px;
+  margin: auto;
+}
+
+.card {
+  background: var(--card);
+  padding: 16px;
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px rgba(177,18,38,0.35);
+}
+
+.card h2 {
+  margin-top: 0;
+  color: var(--crimson-light);
+  font-size: 1.2rem;
+}
+
+input, textarea, button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: none;
+  background: #120b0b;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+textarea {
+  resize: none;
+  height: 90px;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #888;
+}
+
+button {
+  margin-top: 14px;
+  background: var(--crimson);
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+button:active {
+  background: var(--crimson-light);
+}
+
+.output {
+  margin-top: 12px;
+  font-size: 0.95rem;
+  color: var(--crimson-light);
+  word-wrap: break-word;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>Merv Images</h1>
+  <p>Encrypt images. No visible changes.</p>
+</header>
+
+<div class="container">
+
+  <!-- ENCODE -->
+  <div class="card">
+    <h2>🔐 Encode Image</h2>
+
+    <input type="file" id="encodeImage" accept="image/png" onchange="setImageName()">
+    <input type="text" id="imageName" placeholder="Output image name">
+    <textarea id="encodeMessage" placeholder="Secret message"></textarea>
+    <input type="password" id="encodePassword" placeholder="Password">
+
+    <button onclick="encodeImage()">Encode & Download</button>
+  </div>
+
+  <!-- DECODE -->
+  <div class="card">
+    <h2>🔓 Decode Image</h2>
+
+    <input type="file" id="decodeImage" accept="image/png">
+    <input type="password" id="decodePassword" placeholder="Password">
+
+    <button onclick="decodeImage()">Decode</button>
+    <div class="output" id="decodedOutput"></div>
+  </div>
+
+</div>
+
+<script>
+// ---------- IMAGE NAME ----------
+function setImageName() {
+  const file = document.getElementById("encodeImage").files[0];
+  if (file) document.getElementById("imageName").value = file.name;
+}
+
+// ---------- CRYPTO ----------
+async function getKey(password) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: enc.encode("merv-images"),
+      iterations: 100000,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encrypt(text, password) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await getKey(password);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(text)
+  );
+
+  return btoa(String.fromCharCode(...iv)) + ":" +
+         btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+}
+
+async function decrypt(data, password) {
+  const [ivPart, textPart] = data.split(":");
+  const iv = Uint8Array.from(atob(ivPart), c => c.charCodeAt(0));
+  const encrypted = Uint8Array.from(atob(textPart), c => c.charCodeAt(0));
+  const key = await getKey(password);
+
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    encrypted
+  );
+
+  return new TextDecoder().decode(decrypted);
+}
+
+// ---------- ENCODE ----------
+async function encodeImage() {
+  const file = document.getElementById("encodeImage").files[0];
+  const message = document.getElementById("encodeMessage").value;
+  const password = document.getElementById("encodePassword").value;
+  let fileName = document.getElementById("imageName").value || "merv-image.png";
+
+  if (!file || !message || !password) {
+    alert("Fill in all fields.");
+    return;
+  }
+
+  if (!fileName.toLowerCase().endsWith(".png")) {
+    fileName += ".png";
+  }
+
+  const encrypted = await encrypt(message, password);
+  const imgData = await file.arrayBuffer();
+
+  const marker = new TextEncoder().encode("MERVSECRET:");
+  const secret = new TextEncoder().encode(encrypted);
+
+  const combined = new Uint8Array(
+    imgData.byteLength + marker.length + secret.length
+  );
+
+  combined.set(new Uint8Array(imgData), 0);
+  combined.set(marker, imgData.byteLength);
+  combined.set(secret, imgData.byteLength + marker.length);
+
+  const blob = new Blob([combined], { type: "image/png" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  a.click();
+}
+
+// ---------- DECODE ----------
+async function decodeImage() {
+  const file = document.getElementById("decodeImage").files[0];
+  const password = document.getElementById("decodePassword").value;
+
+  if (!file || !password) {
+    alert("Missing image or password.");
+    return;
+  }
+
+  const buffer = new Uint8Array(await file.arrayBuffer());
+  const text = new TextDecoder().decode(buffer);
+  const index = text.indexOf("MERVSECRET:");
+
+  if (index === -1) {
+    document.getElementById("decodedOutput").textContent =
+      "No hidden message found.";
+    return;
+  }
+
+  const encrypted = text.substring(index + 11);
+
+  try {
+    const message = await decrypt(encrypted, password);
+    document.getElementById("decodedOutput").textContent = message;
+  } catch {
+    document.getElementById("decodedOutput").textContent =
+      "Wrong password.";
+  }
+}
+</script>
+
+</body>
+</html>
